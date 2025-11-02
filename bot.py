@@ -198,7 +198,10 @@ def setup_scheduler():
 
 @app.route('/')
 def index():
-    return jsonify({"status": "water-bot", "time": datetime.utcnow().isoformat()})
+    from datetime import timezone  # если ещё не импортирован
+
+    return jsonify({"status": "water-bot", "time": datetime.now(timezone.utc).isoformat()})
+
 
 @app.route('/healthz')
 def healthz():
