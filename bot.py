@@ -157,32 +157,6 @@ def process_update(u):
         else:
             out = "\n\n".join([f"{i+1}. {m}" for i, m in enumerate(msgs)])
             send_message(chat_id, out, label="/list_messages content")
-            
-    elif text.startswith("/list_users") and from_user.get("id") == ADMIN_ID:
-    # Получаем список всех пользователей
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT tg_id, first_name, last_name, username, added_at FROM users")
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        send_message(chat_id, "Пользователи отсутствуют.")
-    else:
-        # Формируем человекочитаемый список
-        out = "\n".join([f"{r[0]} — {r[1] or ''} {r[2] or ''} @{r[3] or ''} (добавлен {r[4]})" for r in rows])
-        send_message(chat_id, out)
-        
-
-    elif text.startswith("/add_message") and from_user.get("id") == ADMIN_ID:
-        parts = text.split(" ", 1)
-        if len(parts) < 2 or not parts[1].strip():
-            send_message(chat_id, "Использование: /add_message Текст сообщения", label="/add_message error")
-        else:
-            msgs = load_messages()
-            msgs.append(parts[1].strip())
-            save_messages(msgs)
-            send_message(chat_id, "Сообщение добавлено.", label="/add_message success")
 
     elif text.startswith("/remove_message") and from_user.get("id") == ADMIN_ID:
         parts = text.split(" ", 1)
