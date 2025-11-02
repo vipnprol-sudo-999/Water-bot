@@ -6,7 +6,7 @@ import sqlite3
 import requests
 from flask import Flask, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
+from datetime import datetime, timezone
 from random import choice
 from dotenv import load_dotenv
 
@@ -23,6 +23,8 @@ if not BOT_TOKEN:
 
 app = Flask(__name__)
 
+# --------------------- Database ---------------------
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -33,8 +35,7 @@ def init_db():
         last_name TEXT,
         username TEXT,
         added_at TEXT
-        )
-    """)
+    )""")
     conn.commit()
     conn.close()
 
@@ -56,14 +57,13 @@ def get_all_user_ids():
     conn.close()
     return [r[0] for r in rows]
 
+# --------------------- Messages ---------------------
+
 def load_messages():
     try:
         with open(MESSAGES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if isinstance(data, list):
-                return data
-            else:
-                return []
+            return data if isinstance(data, list) else []
     except Exception as e:
         print("Failed to load messages.json:", e)
         return []
@@ -72,25 +72,37 @@ def save_messages(messages):
     with open(MESSAGES_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, ensure_ascii=False, indent=2)
 
-def escape_html(text):
-    """Экранируем текст для HTML parse_mode"""
-    return (
-        text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-    )
+# --------------------- Send message ---------------------
 
-def send_message(tg_id, text):
+def escape_html(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def send_message(tg_id, text, label=""):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": tg_id, "text": escape_html(text), "parse_mode": "HTML"}
+    safe_text = escape_html(text)
+    payload = {"chat_id": tg_id, "text": safe_text, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
         if r.status_code != 200:
-            print("Failed to send message", r.status_code, r.text)
+            print(f"\n⚠ Failed to send message to {tg_id} ({label}):")
+            print(f"Status code: {r.status_code}")
+            print(f"Response: {r.text}")
+            # Если 400, покажем проблемную область
+            if r.status_code == 400:
+                offset_str = "Can't find end of the entity starting at byte offset "
+                if offset_str in r.text:
+                    import re
+                    m = re.search(offset_str + r"(\d+)", r.text)
+                    if m:
+                        offset = int(m.group(1))
+                        b = safe_text.encode("utf-8")
+                        snippet = b[max(offset-10,0):offset+10].decode("utf-8", errors="replace")
+                        print(f"Problematic snippet around byte {offset}: ...{snippet}...")
     except Exception as e:
-        print("Exception sending message:", e)
+        print(f"Exception sending message to {tg_id} ({label}): {e}")
 
-# Handle incoming updates (simple polling)
+# --------------------- Polling ---------------------
+
 offset_file = "offset.txt"
 
 def save_offset(offset):
@@ -116,17 +128,18 @@ def process_update(u):
     text = m.get("text", "")
     if text is None:
         return
-    # register user on any message
+
     add_user(chat_id, from_user.get("first_name"), from_user.get("last_name"), from_user.get("username"))
+
     if text.startswith("/start"):
-        # send welcome message with reference
         welcome = (
             "Привет! Я — бот, который будет напоминать пить воду и присылать короткие заботливые фразы.\n\n"
             "Почему это важно: вода участвует во всех процессах организма — от работы мозга до обмена веществ.\n\n"
             "Рекомендуемая норма — примерно 30–35 мл на каждый килограмм веса в день.\n\n"
             "Если ты — админ бота, отправь мне команду /admin_help"
         )
-        send_message(chat_id, welcome)
+        send_message(chat_id, welcome, label="/start welcome")
+
     elif text.startswith("/admin_help") and from_user.get("id") == ADMIN_ID:
         admin_text = (
             "Админ-команды:\n"
@@ -134,36 +147,39 @@ def process_update(u):
             "/add_message <текст> — добавить сообщение\n"
             "/remove_message <index> — удалить сообщение по индексу (начиная с 1)\n"
         )
-        send_message(chat_id, admin_text)
+        send_message(chat_id, admin_text, label="/admin_help")
+
     elif text.startswith("/list_messages") and from_user.get("id") == ADMIN_ID:
         msgs = load_messages()
         if not msgs:
-            send_message(chat_id, "Список сообщений пустой.")
+            send_message(chat_id, "Список сообщений пустой.", label="/list_messages empty")
         else:
-            out = "\n\n".join([f"{i+1}. {escape_html(m)}" for i, m in enumerate(msgs)])
-            send_message(chat_id, out)
+            out = "\n\n".join([f"{i+1}. {m}" for i, m in enumerate(msgs)])
+            send_message(chat_id, out, label="/list_messages content")
+
     elif text.startswith("/add_message") and from_user.get("id") == ADMIN_ID:
         parts = text.split(" ", 1)
         if len(parts) < 2 or not parts[1].strip():
-            send_message(chat_id, "Использование: /add_message Текст сообщения")
+            send_message(chat_id, "Использование: /add_message Текст сообщения", label="/add_message error")
         else:
             msgs = load_messages()
             msgs.append(parts[1].strip())
             save_messages(msgs)
-            send_message(chat_id, "Сообщение добавлено.")
+            send_message(chat_id, "Сообщение добавлено.", label="/add_message success")
+
     elif text.startswith("/remove_message") and from_user.get("id") == ADMIN_ID:
         parts = text.split(" ", 1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
-            send_message(chat_id, "Использование: /remove_message Номер")
+            send_message(chat_id, "Использование: /remove_message Номер", label="/remove_message error")
         else:
             idx = int(parts[1].strip()) - 1
             msgs = load_messages()
             if 0 <= idx < len(msgs):
                 removed = msgs.pop(idx)
                 save_messages(msgs)
-                send_message(chat_id, f'Удалено: {escape_html(removed)}')
+                send_message(chat_id, f'Удалено: {removed}', label=f"/remove_message line {idx+1}")
             else:
-                send_message(chat_id, "Неверный индекс.")
+                send_message(chat_id, "Неверный индекс.", label="/remove_message invalid")
 
 def polling_loop():
     print("Starting polling loop...")
@@ -184,7 +200,8 @@ def polling_loop():
             print("Polling exception:", e)
         time.sleep(1)
 
-# Scheduler: send reminders at specified hours
+# --------------------- Scheduler ---------------------
+
 def send_reminders():
     messages = load_messages()
     users = get_all_user_ids()
@@ -192,7 +209,8 @@ def send_reminders():
         return
     for u in users:
         try:
-            send_message(u, choice(messages))
+            msg = choice(messages)
+            send_message(u, msg, label="reminder")
         except Exception as e:
             print("Error sending to", u, e)
 
@@ -204,18 +222,21 @@ def setup_scheduler():
     scheduler.start()
     print("Scheduler started with hours:", hours)
 
+# --------------------- Flask ---------------------
+
 @app.route('/')
 def index():
-    from datetime import timezone
     return jsonify({"status": "water-bot", "time": datetime.now(timezone.utc).isoformat()})
-
 
 @app.route('/healthz')
 def healthz():
     return "OK"
 
+# --------------------- Main ---------------------
+
 if __name__ == '__main__':
     init_db()
+
     # Ensure messages.json exists
     if not os.path.exists(MESSAGES_FILE):
         default = [
