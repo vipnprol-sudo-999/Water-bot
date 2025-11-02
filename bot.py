@@ -132,7 +132,7 @@ def process_update(u):
         if not msgs:
             send_message(chat_id, "Список сообщений пустой.")
         else:
-            out = \"\\n\\n\".join([f\"{i+1}. {m}\" for i, m in enumerate(msgs)])
+            out = "\n\n".join([f"{i+1}. {m}" for i, m in enumerate(msgs)])
             send_message(chat_id, out)
     elif text.startswith("/add_message") and from_user.get("id") == ADMIN_ID:
         parts = text.split(" ", 1)
