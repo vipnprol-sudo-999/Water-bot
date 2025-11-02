@@ -1,4 +1,3 @@
-
 import os
 import time
 import json
@@ -42,8 +41,10 @@ def init_db():
 def add_user(tg_id, first_name=None, last_name=None, username=None):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("INSERT OR IGNORE INTO users (tg_id, first_name, last_name, username, added_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                (tg_id, first_name, last_name, username))
+    cur.execute(
+        "INSERT OR IGNORE INTO users (tg_id, first_name, last_name, username, added_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        (tg_id, first_name, last_name, username)
+    )
     conn.commit()
     conn.close()
 
@@ -71,9 +72,17 @@ def save_messages(messages):
     with open(MESSAGES_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, ensure_ascii=False, indent=2)
 
+def escape_html(text):
+    """Экранируем текст для HTML parse_mode"""
+    return (
+        text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    )
+
 def send_message(tg_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": tg_id, "text": text, "parse_mode": "Markdown"}
+    payload = {"chat_id": tg_id, "text": escape_html(text), "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=10)
         if r.status_code != 200:
@@ -131,7 +140,7 @@ def process_update(u):
         if not msgs:
             send_message(chat_id, "Список сообщений пустой.")
         else:
-            out = "\n\n".join([f"{i+1}. {m}" for i, m in enumerate(msgs)])
+            out = "\n\n".join([f"{i+1}. {escape_html(m)}" for i, m in enumerate(msgs)])
             send_message(chat_id, out)
     elif text.startswith("/add_message") and from_user.get("id") == ADMIN_ID:
         parts = text.split(" ", 1)
@@ -152,7 +161,7 @@ def process_update(u):
             if 0 <= idx < len(msgs):
                 removed = msgs.pop(idx)
                 save_messages(msgs)
-                send_message(chat_id, f'Удалено: {removed}')
+                send_message(chat_id, f'Удалено: {escape_html(removed)}')
             else:
                 send_message(chat_id, "Неверный индекс.")
 
@@ -197,8 +206,7 @@ def setup_scheduler():
 
 @app.route('/')
 def index():
-    from datetime import timezone  # если ещё не импортирован
-
+    from datetime import timezone
     return jsonify({"status": "water-bot", "time": datetime.now(timezone.utc).isoformat()})
 
 
